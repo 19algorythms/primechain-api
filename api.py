@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SERTAKIS ALTERNÉ — API REST (FastAPI)
+PrimeChain API — Sertakis Alterné Engine (Sécurisé)
 Auteurs : Antoine Couet (Architecte1995) & Kimi K3
 Licence : MIT
 
-Endpoints :
-  POST /chain      → génère une chaîne alternée
-  POST /verify     → vérifie une chaîne existante
-  POST /stats      → analyse statistique d'une chaîne
-  GET  /health     → santé du service
+Endpoints protégés par clé API (header X-API-Key).
+La clé est lue depuis la variable d'environnement API_KEY.
+Si API_KEY n'est pas définie, l'API reste ouverte (mode dev).
 """
 
+import os
 from collections import Counter
-from typing import List
-from fastapi import FastAPI, HTTPException
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from sertakis_core import generer_chaine, verifier_chaine
 
 app = FastAPI(
-    title="Sertakis Alterné API",
-    version="5.1.1",
-    description="Générateur de chaînes alternées Cunningham↔Sertakis avec crible orbital",
+    title="PrimeChain API",
+    version="5.1.1-secure",
+    description="Alternating prime chain generator with orbital sieve",
 )
+
+# ---------------------------------------------------------------------------
+# Sécurité : clé API via header X-API-Key
+# ---------------------------------------------------------------------------
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: Optional[str] = Security(api_key_header)) -> Optional[str]:
+    expected = os.environ.get("API_KEY")
+    if expected and api_key != expected:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing API key",
+        )
+    return api_key
 
 # ---------------------------------------------------------------------------
 # Modèles Pydantic
@@ -36,22 +50,9 @@ class ChainRequest(BaseModel):
     f_pre: int = Field(2000, ge=100, le=10000, description="Fossoyeurs couverts")
     lambda_oubli: float = Field(0.92, ge=0.0, le=1.0)
 
-class ChainResponse(BaseModel):
-    metadata: dict
-    parametres: dict
-    resultats: dict
-    chaine: dict
-    rampes_apprises: list
-    memoire: dict
-
 class VerifyRequest(BaseModel):
     chaine: List[int]
     types: List[str]
-
-class VerifyResponse(BaseModel):
-    valid: bool
-    all_prime: bool
-    transitions_ok: bool
 
 class StatsRequest(BaseModel):
     chaine: List[int]
@@ -62,10 +63,11 @@ class StatsRequest(BaseModel):
 # ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "5.1.1"}
+    """Public — utilisé par le keepalive cron-job."""
+    return {"status": "ok", "version": "5.1.1-secure"}
 
-@app.post("/chain", response_model=ChainResponse)
-def chain_endpoint(req: ChainRequest):
+@app.post("/chain")
+def chain_endpoint(req: ChainRequest, api_key: Optional[str] = Security(verify_api_key)):
     try:
         result = generer_chaine(
             p0=req.p0,
@@ -79,18 +81,17 @@ def chain_endpoint(req: ChainRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/verify", response_model=VerifyResponse)
-def verify_endpoint(req: VerifyRequest):
+@app.post("/verify")
+def verify_endpoint(req: VerifyRequest, api_key: Optional[str] = Security(verify_api_key)):
     if len(req.chaine) != len(req.types) + 1:
         raise HTTPException(status_code=400, detail="len(chaine) doit être len(types)+1")
     return verifier_chaine(req.chaine, req.types)
 
 @app.post("/stats")
-def stats_endpoint(req: StatsRequest):
-    """Analyse statistique rapide d'une chaîne existante."""
+def stats_endpoint(req: StatsRequest, api_key: Optional[str] = Security(verify_api_key)):
     if len(req.chaine) != len(req.types) + 1:
         raise HTTPException(status_code=400, detail="len(chaine) doit être len(types)+1")
-
+    
     n = len(req.types)
     nC = req.types.count("C")
     bursts, cur = [], 0
@@ -101,7 +102,7 @@ def stats_endpoint(req: StatsRequest):
             if cur: bursts.append(cur)
             cur = 0
     if cur: bursts.append(cur)
-
+    
     return {
         "profondeur": n,
         "pas_cunningham": nC,
