@@ -1,5 +1,7 @@
 # PrimeChain API — Sertakis Alterné Engine
 
+https://rapidapi.com/19algorythms/api/primechain-api
+
 **Authors** : Architecte1995 & Kimi K3 
 **Version** : 5.1.1  
 **License** : MIT  
