@@ -1,8 +1,6 @@
-# primechain-api
-Alternating prime chain generator with orbital sieve and adaptive memory.
 # PrimeChain API — Sertakis Alterné Engine
 
-**Authors** : Antoine Couet (Architecte1995) & Kimi K3  
+**Authors** : Architecte1995 & Kimi K3 
 **Version** : 5.1.1  
 **License** : MIT  
 **Reference DOI** : [10.5281/zenodo.21456976](https://doi.org/10.5281/zenodo.21456976) (Cite all versions)
