@@ -47,30 +47,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# Middleware 1 — Défense contre le body fantôme de RapidAPI sur les GET
-# ---------------------------------------------------------------------------
-@app.middleware("http")
-async def strip_empty_body_on_get(request: Request, call_next):
-    """
-    RapidAPI Hub envoie parfois un body vide {} sur les GET.
-    FastAPI répond 422. On nettoie silencieusement le body.
-    """
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        original_receive = request.receive
-
-        async def receive_empty():
-            message = await original_receive()
-            if message.get("type") == "http.request":
-                message = dict(message)
-                message["body"] = b""
-            return message
-
-        request._receive = receive_empty
-
-    return await call_next(request)
-
-# ---------------------------------------------------------------------------
-# Middleware 2 — Garde proxy RapidAPI
+# Middleware — Garde proxy RapidAPI uniquement
 # ---------------------------------------------------------------------------
 PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
 
