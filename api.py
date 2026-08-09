@@ -5,12 +5,8 @@ SERTAKIS ALTERNÉ — API REST (FastAPI)
 Auteurs : Antoine Couet (Architecte1995) & Kimi K3
 Licence : MIT
 
-Endpoints :
-  GET  /           → racine (info service)
-  GET  /health     → santé du service
-  POST /chain      → génère une chaîne alternée
-  POST /verify     → vérifie une chaîne existante
-  POST /stats      → analyse statistique d'une chaîne
+Endpoints publics  : /, /health, /docs, /redoc, /openapi.json
+Endpoints protégés : /chain, /verify, /stats  (via X-RapidAPI-Proxy-Secret)
 """
 
 import os
@@ -18,7 +14,8 @@ import sys
 from collections import Counter
 from typing import List, Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -45,6 +42,38 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# ---------------------------------------------------------------------------
+# Middleware de garde — vérifie le proxy RapidAPI
+# ---------------------------------------------------------------------------
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+
+@app.middleware("http")
+async def rapidapi_proxy_guard(request: Request, call_next):
+    """
+    Bloque l'accès direct au domaine Render.
+    Seules les requêtes provenant du proxy RapidAPI (header secret)
+    ou les routes publiques sont acceptées.
+    """
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    rapidapi_secret = os.environ.get("RAPIDAPI_SECRET")
+
+    # Mode dev : si le secret n'est pas configuré sur Render, on laisse passer
+    if not rapidapi_secret:
+        return await call_next(request)
+
+    proxy_secret = request.headers.get("X-RapidAPI-Proxy-Secret")
+    if proxy_secret != rapidapi_secret:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Forbidden. Access this API through RapidAPI proxy only."
+            },
+        )
+
+    return await call_next(request)
 
 # ---------------------------------------------------------------------------
 # Modèles Pydantic
@@ -79,7 +108,7 @@ class StatsRequest(BaseModel):
     types: List[str]
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Endpoints publics
 # ---------------------------------------------------------------------------
 @app.get("/", tags=["meta"])
 def root() -> Dict[str, Any]:
@@ -109,6 +138,9 @@ def health() -> Dict[str, str]:
         "core_loaded": "yes" if CORE_AVAILABLE else "no",
     }
 
+# ---------------------------------------------------------------------------
+# Endpoints protégés (nécessitent le proxy RapidAPI en production)
+# ---------------------------------------------------------------------------
 @app.post("/chain", response_model=ChainResponse, tags=["engine"])
 def chain_endpoint(req: ChainRequest) -> Dict[str, Any]:
     """Génère une chaîne alternée à partir d'un premier p0."""
