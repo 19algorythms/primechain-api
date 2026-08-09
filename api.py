@@ -1,48 +1,124 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PrimeChain API — Sertakis Alterné Engine
+SERTAKIS ALTERNÉ — API REST (FastAPI)
 Auteurs : Antoine Couet (Architecte1995) & Kimi K3
 Licence : MIT
+
+Endpoints :
+  GET  /           → racine (info service)
+  GET  /health     → santé du service
+  POST /chain      → génère une chaîne alternée
+  POST /verify     → vérifie une chaîne existante
+  POST /stats      → analyse statistique d'une chaîne
 """
 
+import os
+import sys
 from collections import Counter
-from typing import List
+from typing import List, Dict, Any
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from sertakis_core import generer_chaine, verifier_chaine
+# ---------------------------------------------------------------------------
+# Import du core (avec fallback si non dispo pour les tests)
+# ---------------------------------------------------------------------------
+try:
+    from sertakis_core import generer_chaine, verifier_chaine
+    CORE_AVAILABLE = True
+except ImportError:
+    CORE_AVAILABLE = False
+    generer_chaine = None
+    verifier_chaine = None
 
+# ---------------------------------------------------------------------------
+# Application FastAPI
+# ---------------------------------------------------------------------------
 app = FastAPI(
-    title="PrimeChain API",
+    title="PrimeChain API — Sertakis Alterné Engine",
     version="5.1.1",
-    description="Alternating prime chain generator with orbital sieve",
+    description=(
+        "Générateur de chaînes alternées Cunningham↔Sertakis "
+        "avec crible orbital et mémoire adaptative EWMA."
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
+# ---------------------------------------------------------------------------
+# Modèles Pydantic
+# ---------------------------------------------------------------------------
 class ChainRequest(BaseModel):
-    p0: int = Field(..., gt=1)
-    prof_cible: int = Field(150, ge=1, le=500)
-    g_max: int = Field(400, ge=2, le=2000)
-    k_burst_max: int = Field(12, ge=1, le=50)
-    f_pre: int = Field(2000, ge=100, le=10000)
+    p0: int = Field(..., gt=1, description="Nombre premier de départ")
+    prof_cible: int = Field(150, ge=1, le=500, description="Profondeur visée")
+    g_max: int = Field(400, ge=2, le=2000, description="Gap Sertakis maximal")
+    k_burst_max: int = Field(12, ge=1, le=50, description="Profondeur de burst évaluée")
+    f_pre: int = Field(2000, ge=100, le=10000, description="Fossoyeurs couverts")
     lambda_oubli: float = Field(0.92, ge=0.0, le=1.0)
+
+class ChainResponse(BaseModel):
+    metadata: dict
+    parametres: dict
+    resultats: dict
+    chaine: dict
+    rampes_apprises: list
+    memoire: dict
 
 class VerifyRequest(BaseModel):
     chaine: List[int]
     types: List[str]
 
+class VerifyResponse(BaseModel):
+    valid: bool
+    all_prime: bool
+    transitions_ok: bool
+
 class StatsRequest(BaseModel):
     chaine: List[int]
     types: List[str]
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "version": "5.1.1"}
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/", tags=["meta"])
+def root() -> Dict[str, Any]:
+    """Point d'entrée racine — évite le 404 sur Render."""
+    return {
+        "service": "PrimeChain API",
+        "version": "5.1.1",
+        "authors": "Architecte1995 & Kimi K3",
+        "license": "MIT",
+        "reference_doi": "10.5281/zenodo.21456976",
+        "endpoints": {
+            "health": "/health",
+            "chain": "POST /chain",
+            "verify": "POST /verify",
+            "stats": "POST /stats",
+            "docs": "/docs",
+        },
+        "core_loaded": CORE_AVAILABLE,
+    }
 
-@app.post("/chain")
-def chain_endpoint(req: ChainRequest):
+@app.get("/health", tags=["meta"])
+def health() -> Dict[str, str]:
+    """Health check pour Render et les load balancers."""
+    return {
+        "status": "ok",
+        "version": "5.1.1",
+        "core_loaded": "yes" if CORE_AVAILABLE else "no",
+    }
+
+@app.post("/chain", response_model=ChainResponse, tags=["engine"])
+def chain_endpoint(req: ChainRequest) -> Dict[str, Any]:
+    """Génère une chaîne alternée à partir d'un premier p0."""
+    if not CORE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Core engine unavailable. sertakis_core.py not found.",
+        )
     try:
-        return generer_chaine(
+        result = generer_chaine(
             p0=req.p0,
             prof_cible=req.prof_cible,
             g_max=req.g_max,
@@ -50,20 +126,34 @@ def chain_endpoint(req: ChainRequest):
             f_pre=req.f_pre,
             lambda_oubli=req.lambda_oubli,
         )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/verify")
-def verify_endpoint(req: VerifyRequest):
+@app.post("/verify", response_model=VerifyResponse, tags=["engine"])
+def verify_endpoint(req: VerifyRequest) -> Dict[str, Any]:
+    """Vérifie la validité d'une chaîne existante."""
+    if not CORE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Core engine unavailable. sertakis_core.py not found.",
+        )
     if len(req.chaine) != len(req.types) + 1:
-        raise HTTPException(status_code=400, detail="len(chaine) doit être len(types)+1")
+        raise HTTPException(
+            status_code=400,
+            detail="len(chaine) doit être len(types)+1",
+        )
     return verifier_chaine(req.chaine, req.types)
 
-@app.post("/stats")
-def stats_endpoint(req: StatsRequest):
+@app.post("/stats", tags=["analytics"])
+def stats_endpoint(req: StatsRequest) -> Dict[str, Any]:
+    """Analyse statistique rapide d'une chaîne existante."""
     if len(req.chaine) != len(req.types) + 1:
-        raise HTTPException(status_code=400, detail="len(chaine) doit être len(types)+1")
-    
+        raise HTTPException(
+            status_code=400,
+            detail="len(chaine) doit être len(types)+1",
+        )
+
     n = len(req.types)
     nC = req.types.count("C")
     bursts, cur = [], 0
@@ -71,10 +161,12 @@ def stats_endpoint(req: StatsRequest):
         if k == "C":
             cur += 1
         else:
-            if cur: bursts.append(cur)
+            if cur:
+                bursts.append(cur)
             cur = 0
-    if cur: bursts.append(cur)
-    
+    if cur:
+        bursts.append(cur)
+
     return {
         "profondeur": n,
         "pas_cunningham": nC,
@@ -85,3 +177,17 @@ def stats_endpoint(req: StatsRequest):
         "distribution_bursts": dict(Counter(bursts)),
         "valeur_finale": req.chaine[-1],
     }
+
+# ---------------------------------------------------------------------------
+# Point d'entrée standalone (Render + local)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        log_level="info",
+    )
